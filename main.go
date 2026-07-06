@@ -16,7 +16,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	targets, err := fetchTargets(connections)
+	targets, err := fetchTargets(dlConns)
 	if err != nil {
 		var netErr net.Error
 		if errors.As(err, &netErr) {

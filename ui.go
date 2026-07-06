@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	connections  = 5
+	dlConns      = 5
+	ulConns      = 6
 	downloadTime = 10 * time.Second
 	uploadTime   = 10 * time.Second
 	sparkWidth   = 28
@@ -163,8 +164,8 @@ func (m Model) measure() tea.Msg {
 }
 
 func (m Model) measureUpload() tea.Msg {
-	for _, url := range m.targets {
-		go upload(m.ctx, url, m.bytes)
+	for i := 0; i < ulConns; i++ {
+		go upload(m.ctx, "", m.bytes)
 	}
 	return nil
 }

@@ -15,7 +15,12 @@ import (
 	"time"
 )
 
-const fallbackToken = "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm"
+const (
+	fallbackToken   = "YXNkZmFzZGxmbnNkYWZoYXNkZmhrYWxm"
+	cloudflareUpURL = "https://speed.cloudflare.com/__up"
+	uploadChunkSize = 1024 * 1024 // 1MB chunks
+	uploadConns     = 6
+)
 
 var (
 	scriptExpr = regexp.MustCompile(`app-[a-z0-9]+\.js`)
@@ -101,17 +106,27 @@ func download(ctx context.Context, url string, total *atomic.Int64) {
 	}
 }
 
-func upload(ctx context.Context, url string, total *atomic.Int64) {
-	data := make([]byte, 32*1024)
+func upload(ctx context.Context, _ string, total *atomic.Int64) {
+	data := make([]byte, uploadChunkSize)
 	rand.Read(data) //nolint:errcheck
 
+	tr := &http.Transport{
+		MaxIdleConns:        1,
+		MaxConnsPerHost:     1,
+		MaxIdleConnsPerHost: 1,
+		DisableCompression:  true,
+	}
+	client := &http.Client{Transport: tr, Timeout: 10 * time.Second}
+
 	for ctx.Err() == nil {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, cloudflareUpURL, bytes.NewReader(data))
 		if err != nil {
 			return
 		}
 		req.Header.Set("Content-Type", "application/octet-stream")
-		resp, err := http.DefaultClient.Do(req)
+		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(data)))
+
+		resp, err := client.Do(req)
 		if err != nil {
 			return
 		}
