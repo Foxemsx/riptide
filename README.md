@@ -8,6 +8,20 @@ graphs.
 
 ![Showcase GIF](assets/showcase.gif)
 
+---
+
+## Screenshots
+
+| Home (testing in progress)            | Finished (summary)                | Help menu (`?`)                    |
+| ------------------------------------- | --------------------------------- | ---------------------------------- |
+| ![Home](assets/home.png)              | ![Finished](assets/finished.png)  | ![Help menu](assets/helpmenu.png)  |
+
+- **Home** — the centered card with the live `SPEED` header, download/upload
+  gradient graphs, and a spinner while servers are found.
+- **Finished** — the final summary with peak download/upload rates and ping.
+- **Help menu** — press `?` during a run to see the live controls.
+
+
 [![terminal speed test](https://img.shields.io/badge/terminal-speed%20test-39d0d8?style=flat-square)](https://github.com/Foxemsx/speed)
 [![Linux](https://img.shields.io/badge/Linux-supported-2ea44f?style=flat-square&logo=linux&logoColor=white)](https://github.com/Foxemsx/speed)
 [![Windows](https://img.shields.io/badge/Windows-supported-0078D6?style=flat-square&logo=windows&logoColor=white)](https://github.com/Foxemsx/speed)
@@ -26,15 +40,20 @@ too.
   terminal's default background when omitted).
 - **Distinct accent colors** for download (teal) vs upload (amber), with a
   small reskinnable theme.
-- **Compact live sparklines** beside each speed readout, refreshed every
-  ~100 ms.
+- **Live gradient graphs** for download and upload — vertical bars shaded
+  dark-at-base → bright-at-tip, so throughput spikes stand out, refreshed
+  every ~100 ms.
 - **Smooth interpolation** (lerp) so the numbers and bars glide instead of
   snapping.
 - **Phase progression**: finding servers (spinner) → download → upload →
   latency → a one-line summary with peak values.
+- **Live controls** while the test runs:
+  - `c` — cycle units (Mbps / KB/s / MB/s / GB/s)
+  - `r` — restart the test
+  - `?` — toggle the help overlay
+  - `q` / `esc` / `ctrl+c` — quit (cancels in-flight transfers).
 - **Graceful errors**: no internet / network failures show a clear message,
   never a stack trace.
-- Quits cleanly on **q / esc / ctrl+c**, cancelling in-flight transfers.
 
 ---
 
@@ -188,6 +207,12 @@ speed --bg 0d1117     # the leading '#' is optional
 
 After a run completes, press **q**, **esc**, or **ctrl+c** to quit — you can
 quit at any time to abort an in-progress test.
+
+---
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Foxemsx/speed&type=Date)](https://star-history.com/#Foxemsx/speed&Date)
 
 ---
 
