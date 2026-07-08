@@ -73,6 +73,7 @@ too.
   - `c` — cycle units (Mbps / KB/s / MB/s / GB/s)
   - `r` — restart the test / monitor
   - `p` — pause / resume the monitor (Bandwidth Monitor only)
+  - `t` — toggle compact mode (skip the large logo)
   - `?` — toggle the help overlay
   - `esc` / `m` — back to the main menu
   - `q` / `ctrl+c` — quit (cancels in-flight transfers).
@@ -217,18 +218,21 @@ is especially easy to miss on the fish shell). Make sure `~/go/bin` is on your
 ## Usage
 
 ```sh
-riptide   # opens the startup menu; pick Speed Test or Bandwidth Monitor
+riptide            # opens the startup menu; pick Speed Test or Bandwidth Monitor
+riptide --compact  # same, but skips the large pixel-art logo
 ```
 
 Launch `riptide` with no arguments to open the **main menu**, then choose a
 mode. Each mode has its own live controls (see below). From anywhere,
-`esc` / `m` returns to the menu and `ctrl+c` quits.
+`esc` / `m` returns to the menu and `ctrl+c` quits. Press `t` to toggle
+compact mode (hides the large logo) at any time.
 
 ### Flags
 
-| Flag      | Description                                                                       | Default   |
-| --------- | --------------------------------------------------------------------------------- | --------- |
-| `--theme` | Color theme name. Currently only `default`. Reserved for future palettes.         | `default` |
+| Flag       | Description                                                                       | Default   |
+| ---------- | --------------------------------------------------------------------------------- | --------- |
+| `--theme`  | Color theme name. Currently only `default`. Reserved for future palettes.         | `default` |
+| `--compact`| Skip the large pixel-art logo; show only the tagline header.                      | `false`   |
 
 ### Speed Test controls
 
@@ -236,6 +240,7 @@ mode. Each mode has its own live controls (see below). From anywhere,
 | --------- | ------------------------------------------------- |
 | `c`       | cycle units (Mbps / KB/s / MB/s / GB/s)           |
 | `r`       | restart the test                                 |
+| `t`       | toggle compact mode (skip the large logo)         |
 | `?`       | toggle the help overlay                          |
 | `esc`/`m` | back to the menu                                 |
 | `q`       | quit (cancels the in-flight test)                |
@@ -247,6 +252,7 @@ mode. Each mode has its own live controls (see below). From anywhere,
 | `c`       | cycle units (Mbps / KB/s / MB/s / GB/s)           |
 | `p`       | pause / resume the monitor                        |
 | `r`       | restart the monitor                              |
+| `t`       | toggle compact mode (skip the large logo)         |
 | `?`       | toggle the help overlay                          |
 | `esc`/`m` | back to the menu                                 |
 | `q`       | quit                                             |
