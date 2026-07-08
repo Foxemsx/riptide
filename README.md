@@ -210,12 +210,6 @@ quit at any time to abort an in-progress test.
 
 ---
 
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=Foxemsx/speed&type=Date)](https://star-history.com/#Foxemsx/speed&Date)
-
----
-
 ## License
 
 Released under the [MIT License](LICENSE). Free to use, modify, and
