@@ -379,8 +379,6 @@ func Run(ctx context.Context, p *Progress, connections int, duration time.Durati
 	}
 }
 
-// sendPhase emits a phase transition, aborting if the context is cancelled.
-// sendPhase emits a phase transition. It is non-blocking: if the bridge is
 // momentarily not draining (or the buffer is full) we drop the message rather
 // than block the engine — the model's phase watchdog covers any missed
 // transition, so the UI can never stall on a blocked send here.
@@ -388,6 +386,19 @@ func sendPhase(p *Progress, ph Phase) {
 	select {
 	case p.Phases <- ph:
 	default:
+	}
+}
+
+// sendSample delivers one instantaneous speed sample to the live UI bridge.
+// Like sendPhase it is non-blocking: if the model is momentarily not draining
+// the channel we drop the sample rather than stall the engine (the next tick
+// covers it).
+func sendSample(p *Progress, s Sample) bool {
+	select {
+	case p.Samples <- s:
+		return true
+	default:
+		return false
 	}
 }
 

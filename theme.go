@@ -2,14 +2,9 @@ package main
 
 import "github.com/charmbracelet/lipgloss"
 
-// Theme holds the reskinnable palette for the whole UI. Colors are stored as
-// lipgloss.Color so they can be applied to both the full-screen background and
-// individual text styles. Text colors use lipgloss.AdaptiveColor so they stay
-// readable on light or dark backgrounds.
+// Theme holds the reskinnable palette for the whole UI. Text colors use
+// lipgloss.AdaptiveColor so they stay readable on light or dark terminals.
 type Theme struct {
-	// Background is the full-screen terminal background. May be empty, in
-	// which case we fall back to the terminal's own default background.
-	Background lipgloss.Color
 	// Foreground is the default text color (AdaptiveColor).
 	Foreground lipgloss.AdaptiveColor
 	// Muted is for labels / units / secondary text.
@@ -38,7 +33,6 @@ type Theme struct {
 // yet harmonious: cool tone for the incoming flow, warm tone for the outgoing
 // flow, with muted greys for structure.
 var DefaultTheme = Theme{
-	Background: lipgloss.Color("#0d1117"),
 	Foreground: lipgloss.AdaptiveColor{Light: "#1c2128", Dark: "#e6edf3"},
 	Muted:      lipgloss.AdaptiveColor{Light: "#57606a", Dark: "#7d8590"},
 	Border:     lipgloss.AdaptiveColor{Light: "#afb8c1", Dark: "#30363d"},
@@ -54,11 +48,3 @@ var DefaultTheme = Theme{
 	GraphUpBottom: lipgloss.Color("#8a3b00"),
 	GraphUpTop:    lipgloss.Color("#ffc15e"),
 }
-
-// NoBgTheme is used when the user does not pass --bg: the card still renders
-// but the surrounding terminal keeps its native background.
-var NoBgTheme = func() Theme {
-	t := DefaultTheme
-	t.Background = ""
-	return t
-}()
