@@ -77,6 +77,19 @@ speed
 > **Note:** the installer runs on Linux/macOS. Windows users should use
 > Option 1 below (or `winget` if a package becomes available).
 
+### Interactive uninstaller
+
+The same beginner-friendly TUI, for removing `speed`. It removes **only the
+`speed` binary** (`~/go/bin/speed`) and leaves the Go toolchain and your `PATH`
+untouched. It asks for confirmation before doing anything.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Foxemsx/speed/main/uninstall.sh | sh
+```
+
+> **Note:** also Linux/macOS only. If `speed` is not found, it tells you and
+> exits without removing anything.
+
 ### Option 1 — `go install` (recommended)
 
 This compiles and installs the latest release into your Go bin directory in
