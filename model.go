@@ -35,11 +35,36 @@ func lerp(current, target, factor float64) float64 {
 }
 
 const (
-	tickInterval    = 100 * time.Millisecond
-	animFactor      = 0.18 // higher = snappier, lower = smoother
-	cardWidth       = 64
-	cardInnerWidth  = cardWidth - 4 // account for border + padding
+	tickInterval   = 100 * time.Millisecond
+	animFactor     = 0.18 // higher = snappier, lower = smoother
+	cardWidth      = 64
+	cardInnerWidth = cardWidth - 4 // account for border + padding
+	graphHeight    = 8
 )
+
+// unitMode selects how the measured speed is displayed.
+type unitMode int
+
+const (
+	unitAuto unitMode = iota // Mbps (or Gbps above 1000)
+	unitKB
+	unitMB
+	unitGB
+)
+
+// unitLabel returns the short suffix for the current unit mode.
+func (u unitMode) label() string {
+	switch u {
+	case unitKB:
+		return "KB/s"
+	case unitMB:
+		return "MB/s"
+	case unitGB:
+		return "GB/s"
+	default:
+		return "Mbps"
+	}
+}
 
 // model is the bubbletea model for the speed-test card.
 type model struct {
@@ -70,9 +95,13 @@ type model struct {
 	ulTarget  float64
 	pingDisp  float64
 
-	// Sparklines (recent rate history, Mbps).
-	dlSpark *sparkline
-	ulSpark *sparkline
+	// Live graph (vertical bar chart) of recent rate history, in Mbps.
+	dlGraph *graph
+	ulGraph *graph
+
+	// Controls / display toggles.
+	showHelp bool
+	unit     unitMode
 
 	// Discovered server info for the header.
 	serverName string
@@ -100,8 +129,8 @@ func newModel(theme Theme, hasBg bool) model {
 		spinner:   s,
 		phase:     PhaseInit,
 		testStart: time.Now(),
-		dlSpark:   newSparkline(24, 1, theme.Download),
-		ulSpark:   newSparkline(24, 1, theme.Upload),
+		dlGraph:   newGraph(40, graphHeight, theme.GraphDownBottom, theme.GraphDownTop),
+		ulGraph:   newGraph(40, graphHeight, theme.GraphUpBottom, theme.GraphUpTop),
 	}
 }
 
@@ -116,6 +145,13 @@ func (m model) Init() tea.Cmd {
 		func() tea.Msg { return tickMsg{} },
 		listenCmd(m.events),
 	)
+}
+
+// launchTest kicks off the background test and channel bridge for the
+// current context/progress. Shared by Init and reset.
+func launchTest(ctx context.Context, p *Progress, events chan tea.Msg) {
+	go Run(ctx, p, defaultConnections, defaultDuration)
+	go runBridge(ctx, p, events)
 }
 
 // runBridge fans the background runner's channels into the tea event stream.
@@ -159,6 +195,51 @@ func listenCmd(events chan tea.Msg) tea.Cmd {
 	}
 }
 
+// reset tears down the in-flight test and starts a fresh one, clearing the
+// graphs and all live state. Old goroutines wind down via their cancelled
+// context, so this is safe to call mid-test or after completion.
+func (m *model) reset() tea.Cmd {
+	if m.cancel != nil {
+		m.cancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &Progress{
+		Phases:  make(chan Phase, 16),
+		Samples: make(chan Sample, 256),
+		Result:  make(chan Result, 1),
+	}
+
+	m.ctx = ctx
+	m.cancel = cancel
+	m.progress = p
+	m.events = make(chan tea.Msg, 64)
+	m.phase = PhaseInit
+	m.testStart = time.Now()
+	m.phaseStart = time.Time{}
+	m.phaseDur = 0
+	m.gotResult = false
+	m.err = nil
+	m.quitting = false
+	m.serverName = ""
+	m.result = Result{}
+	m.dlDisplay, m.dlTarget = 0, 0
+	m.ulDisplay, m.ulTarget = 0, 0
+	m.pingDisp = 0
+	m.dlGraph.clear()
+	m.ulGraph.clear()
+
+	m.spinner = spinner.New()
+	m.spinner.Spinner = spinner.Dot
+	m.spinner.Style = lipgloss.NewStyle().Foreground(m.theme.Highlight)
+
+	launchTest(ctx, p, m.events)
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg { return tickMsg{} },
+		listenCmd(m.events),
+	)
+}
+
 // Update handles events.
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -170,17 +251,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancel()
 			}
 			return m, tea.Quit
+		case "?":
+			m.showHelp = !m.showHelp
+			return m, nil
+		case "r":
+			return m, m.reset()
+		case "c":
+			m.unit = (m.unit + 1) % 4
+			return m, nil
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Keep sparklines sized to the card's inner width.
+		// Keep graphs sized to the card's inner width (wider = more history
+		// visible, so spikes are easier to read).
 		inner := m.innerWidth(msg.Width)
-		if inner > 24 {
-			inner = 24
-		}
-		m.dlSpark.setWidth(inner)
-		m.ulSpark.setWidth(inner)
+		m.dlGraph.setWidth(inner)
+		m.ulGraph.setWidth(inner)
 		return m, nil
 
 	case spinner.TickMsg:
@@ -211,7 +298,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenCmd(m.events)
 
 	case tickMsg:
-		// Advance animations (lerp + sparkline growth) toward targets.
+		// Advance animations (lerp + graph growth) toward targets.
 		m.advance()
 		return m, m.tickCmd()
 
@@ -247,7 +334,7 @@ func (m model) tickCmd() tea.Cmd {
 }
 
 // advance interpolates displayed values toward targets and pushes the
-// smoothed value into the active phase's sparkline, so the graph builds up
+// smoothed value into the active phase's graph, so the chart builds up
 // in sync with the number instead of snapping to raw readings. It also runs
 // a self-contained phase watchdog so the UI can never freeze in a single
 // phase even if a network call stalls and the engine's events are delayed.
@@ -262,11 +349,11 @@ func (m *model) advance() {
 	switch m.phase {
 	case PhaseDownload:
 		if m.dlDisplay > 0 {
-			m.dlSpark.push(m.dlDisplay)
+			m.dlGraph.push(m.dlDisplay)
 		}
 	case PhaseUpload:
 		if m.ulDisplay > 0 {
-			m.ulSpark.push(m.ulDisplay)
+			m.ulGraph.push(m.ulDisplay)
 		}
 	}
 
@@ -328,11 +415,40 @@ func (m model) cardWidthFor() int {
 
 // --- Formatting ----------------------------------------------------------
 
+// fmtSpeed formats a value in Mbps for the default (auto) unit: Gbps above
+// 1000, otherwise Mbps.
 func (m model) fmtSpeed(mbps float64) (string, string) {
 	if mbps >= 1000 {
 		return fmt.Sprintf("%5.2f", mbps/1000.0), "Gbps"
 	}
 	return fmt.Sprintf("%5.1f", mbps), "Mbps"
+}
+
+// formatValue formats a measured speed (Mbps) according to the current unit
+// mode. Returns the numeric string (fixed width) and the unit suffix. The
+// graph shape is unaffected — only the labels change.
+func (m model) formatValue(mbps float64) (string, string) {
+	switch m.unit {
+	case unitKB:
+		// bytes/sec / 1e3 = KB/s ; bytes/sec = Mbps * 125000
+		kb := mbps * 125 // 1 Mbps = 125000 bytes/s = 125 KB/s
+		return fmt.Sprintf("%7.1f", kb), "KB/s"
+	case unitMB:
+		mb := mbps * 0.125 // 1 Mbps = 125000 bytes/s = 0.125 MB/s
+		return fmt.Sprintf("%7.2f", mb), "MB/s"
+	case unitGB:
+		gb := mbps * 0.000125 // 1 Mbps = 125000 bytes/s = 0.000125 GB/s
+		return fmt.Sprintf("%7.3f", gb), "GB/s"
+	default:
+		return m.fmtSpeed(mbps)
+	}
+}
+
+// formatPeak renders a measured speed (Mbps) under the current unit mode as a
+// single "num unit" string for the peak line / summary.
+func (m model) formatPeak(mbps float64) string {
+	num, unit := m.formatValue(mbps)
+	return strings.TrimSpace(num) + " " + unit
 }
 
 // --- View ----------------------------------------------------------------
@@ -344,27 +460,14 @@ func (m model) View() string {
 
 	var body strings.Builder
 
-	// Title block: centered bold title, plus a second line that shows the
-	// connected server/region once known.
-	titleStyle := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(m.theme.Foreground)
-	title := center(titleStyle.Render("⚡ internet speed test"), m.cardWidthFor())
-
-	var sub string
+	// A faint server/region line inside the card once known. The prominent
+	// SPEED header now lives above the card (see renderHeader).
 	if m.serverName != "" {
-		sub = "connected to " + m.serverName
-	} else {
-		sub = "measuring your connection"
+		body.WriteString(center(lipgloss.NewStyle().
+			Foreground(m.theme.Muted).
+			Render(truncate("connected to "+m.serverName, m.cardWidthFor()-4)), m.cardWidthFor()))
+		body.WriteString("\n\n")
 	}
-	subtitle := center(lipgloss.NewStyle().
-		Foreground(m.theme.Muted).
-		Render(truncate(sub, m.cardWidthFor()-4)), m.cardWidthFor())
-
-	body.WriteString(title)
-	body.WriteString("\n")
-	body.WriteString(subtitle)
-	body.WriteString("\n\n")
 
 	// Phase status line (spinner for finding servers, check for connected).
 	body.WriteString(m.statusLine())
@@ -372,13 +475,13 @@ func (m model) View() string {
 
 	// Download block.
 	body.WriteString(m.metricBlock(
-		"↓ download", m.theme.Download, m.dlDisplay, m.dlSpark, m.result.DownloadPeak, PhaseDownload,
+		"↓ download", m.theme.Download, m.dlDisplay, m.dlGraph, m.result.DownloadPeak, PhaseDownload,
 	))
 	body.WriteString("\n\n")
 
 	// Upload block.
 	body.WriteString(m.metricBlock(
-		"↑ upload", m.theme.Upload, m.ulDisplay, m.ulSpark, m.result.UploadPeak, PhaseUpload,
+		"↑ upload", m.theme.Upload, m.ulDisplay, m.ulGraph, m.result.UploadPeak, PhaseUpload,
 	))
 	body.WriteString("\n\n")
 
@@ -388,11 +491,10 @@ func (m model) View() string {
 	// Footer hint.
 	hint := lipgloss.NewStyle().
 		Foreground(m.theme.Muted).
-		Render("press q / esc to quit")
+		Render("q quit · r reset · c units (" + m.unit.label() + ") · ? help")
 	body.WriteString("\n\n")
 	body.WriteString(center(hint, m.cardWidthFor()))
 
-	// Wrap in a bordered, padded card.
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Border).
@@ -400,16 +502,29 @@ func (m model) View() string {
 		Width(m.cardWidthFor()).
 		Render(body.String())
 
-	// Center the card both horizontally and vertically in the terminal.
-	placed := lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
+	// Header (SPEED + tagline) sits above the card.
+	header := m.renderHeader()
+	stack := lipgloss.JoinVertical(lipgloss.Center,
+		header,
+		"", // spacer
 		card,
 	)
 
+	// Center the whole stack both horizontally and vertically in the terminal.
+	placed := lipgloss.Place(
+		m.width, m.height,
+		lipgloss.Center, lipgloss.Center,
+		stack,
+	)
+
+	// Help overlay (modal) is drawn when toggled.
+	if m.showHelp {
+		return m.renderHelp()
+	}
+
 	if m.hasBg {
 		// Paint the whole terminal area with the custom background, then
-		// overlay the (transparent) centered card on top of it.
+		// overlay the (transparent) centered stack on top of it.
 		full := lipgloss.NewStyle().
 			Background(m.theme.Background).
 			Width(m.width).
@@ -487,13 +602,14 @@ func (m model) progressBar(frac float64, color lipgloss.AdaptiveColor, width int
 	return fill + empty
 }
 
-// metricBlock renders one download or upload row: label, big number, unit,
-// and a live sparkline, all left-aligned to the same edge so the sparkline
-// underlines the metric. Columns are fixed-width so nothing shifts.
-func (m model) metricBlock(label string, color lipgloss.AdaptiveColor, value float64, spark *sparkline, peak float64, ph Phase) string {
-	numStr, unit := m.fmtSpeed(value)
+// metricBlock renders one download or upload metric: a label + big number +
+// unit on the first line, a vertical gradient graph beneath it, and a faint
+// peak line + axis rule under the graph. Everything is left-aligned so the
+// chart sits directly under its headline.
+func (m model) metricBlock(label string, color lipgloss.AdaptiveColor, value float64, g *graph, peak float64, ph Phase) string {
+	numStr, unit := m.formatValue(value)
 	labelStyle := lipgloss.NewStyle().Foreground(color).Bold(true)
-	numStyle := lipgloss.NewStyle().Foreground(color).Bold(true).Width(6).Align(lipgloss.Right)
+	numStyle := lipgloss.NewStyle().Foreground(color).Bold(true).Width(7).Align(lipgloss.Right)
 	unitStyle := lipgloss.NewStyle().Foreground(m.theme.Muted).Width(5)
 
 	// Dim the metric if its phase hasn't started yet.
@@ -502,18 +618,32 @@ func (m model) metricBlock(label string, color lipgloss.AdaptiveColor, value flo
 		numStyle = numStyle.Faint(true)
 	}
 
-	top := lipgloss.JoinHorizontal(lipgloss.Left,
+	head := lipgloss.JoinHorizontal(lipgloss.Left,
 		labelStyle.Render(label),
 		"  ",
 		numStyle.Render(numStr),
 		" ",
 		unitStyle.Render(unit),
 	)
-	sp := spark.View()
-	if sp == "" {
-		return top
+
+	// Graph + axis rule + peak, only when the timed phase has been reached.
+	var below string
+	graphView := g.View()
+	if graphView == "" {
+		// Before any data: show an empty axis so the layout is stable.
+		graphView = strings.Repeat(" ", g.width)
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Left, top, "   ", sp)
+	axis := lipgloss.NewStyle().Foreground(m.theme.Border).Render(strings.Repeat("─", g.width))
+	peakStr := ""
+	if peak > 0 {
+		peakStr = lipgloss.NewStyle().Foreground(m.theme.Muted).Render("peak " + m.formatPeak(peak))
+	}
+	below = graphView + "\n" + axis
+	if peakStr != "" {
+		below += "\n" + peakStr
+	}
+
+	return head + "\n" + below
 }
 
 // summaryLine shows the final download / upload / ping on one line, with
@@ -530,8 +660,8 @@ func (m model) summaryLine() string {
 	if m.err != nil {
 		return center(lipgloss.NewStyle().Foreground(m.theme.Upload).Render(m.err.Error()), m.cardWidthFor())
 	}
-	dl := lipgloss.NewStyle().Foreground(m.theme.Download).Bold(true).Render(formatMbps(m.result.DownloadMbps))
-	ul := lipgloss.NewStyle().Foreground(m.theme.Upload).Bold(true).Render(formatMbps(m.result.UploadMbps))
+	dl := lipgloss.NewStyle().Foreground(m.theme.Download).Bold(true).Render(m.formatPeak(m.result.DownloadMbps))
+	ul := lipgloss.NewStyle().Foreground(m.theme.Upload).Bold(true).Render(m.formatPeak(m.result.UploadMbps))
 	pg := lipgloss.NewStyle().Foreground(m.theme.Latency).Bold(true).Render(fmt.Sprintf("%.0f ms", m.result.PingMs))
 	line := lipgloss.JoinHorizontal(lipgloss.Center,
 		"↓ "+dl, "    ", "↑ "+ul, "    ", "◷ "+pg,
@@ -578,9 +708,141 @@ func truncate(s string, w int) string {
 	return "…"
 }
 
-func formatMbps(mbps float64) string {
-	if mbps >= 1000 {
-		return fmt.Sprintf("%.2f Gbps", mbps/1000.0)
+// renderHeader draws the prominent title shown ABOVE the card: the word
+// "SPEED" rendered as a large pixel block-art logo with beveled 3D edges, a
+// layered green gradient (dark forest -> neon mint) and a drop shadow, for a
+// clean modern network/performance look. The tagline underneath is preserved
+// exactly as the soft-green subtitle.
+func (m model) renderHeader() string {
+	// 5-wide x 6-tall pixel font for the letters we need (S P E E D).
+	// Source uses '#' as the "on" pixel; rendered as '█' below.
+	glyphs := map[rune][]string{
+		'S': {"#####", "#    ", "#    ", "#####", "    #", "#####"},
+		'P': {"#####", "#   #", "#   #", "#####", "#    ", "#    "},
+		'E': {"#####", "#    ", "#    ", "#### ", "#    ", "#####"},
+		'D': {"#####", "#   #", "#   #", "#   #", "#   #", "#####"},
 	}
-	return fmt.Sprintf("%.1f Mbps", mbps)
+
+	// Green gradient ramp: dark forest (left) -> neon mint (right).
+	ramp := []lipgloss.Color{
+		"#0b3d1e", "#11502a", "#1a7f37", "#2ea043",
+		"#3fb950", "#56d364", "#7ee787", "#b9f6ca",
+	}
+	rampAt := func(i int) lipgloss.Color {
+		if i < 0 {
+			i = 0
+		}
+		if i >= len(ramp) {
+			i = len(ramp) - 1
+		}
+		return ramp[i]
+	}
+
+	const (
+		glyphW = 5
+		glyphH = 6
+		gap    = 1 // space between letters
+		blk    = "█"
+	)
+	word := "SPEED"
+	wordW := len(word)*glyphW + (len(word)-1)*gap // total face columns
+	gridW := wordW + 1                            // +1 for the drop shadow offset
+	gridH := glyphH + 1                           // +1 for the drop shadow offset
+
+	// grid holds a pre-rendered (colored) cell; "" means empty.
+	grid := make([][]string, gridH)
+	for r := range grid {
+		grid[r] = make([]string, gridW)
+	}
+
+	// Drop shadow layer (offset down-right by one cell).
+	shadow := lipgloss.NewStyle().Foreground(lipgloss.Color("#04150b")).Render(blk)
+	for li, r := range word {
+		rows := glyphs[r]
+		for gr := 0; gr < glyphH; gr++ {
+			for gc := 0; gc < glyphW; gc++ {
+				if rows[gr][gc] == '#' {
+					grid[gr+1][li*(glyphW+gap)+gc+1] = shadow
+				}
+			}
+		}
+	}
+
+	// Face layer with beveled edges + per-column gradient.
+	for li, r := range word {
+		rows := glyphs[r]
+		for gr := 0; gr < glyphH; gr++ {
+			for gc := 0; gc < glyphW; gc++ {
+				if rows[gr][gc] != '#' {
+					continue
+				}
+				absCol := li*(glyphW+gap) + gc
+				baseIdx := (absCol * (len(ramp) - 1)) / wordW
+
+				// Bevel: highlight on top/left edges, shadow on bottom/right.
+				up := gr > 0 && rows[gr-1][gc] == '#'
+				down := gr < glyphH-1 && rows[gr+1][gc] == '#'
+				left := gc > 0 && rows[gr][gc-1] == '#'
+				right := gc < glyphW-1 && rows[gr][gc+1] == '#'
+
+				var c lipgloss.Color
+				switch {
+				case !up || !left: // raised top-left edge -> brighter
+					c = rampAt(baseIdx + 2)
+				case !down || !right: // recessed bottom-right edge -> darker
+					c = rampAt(baseIdx - 2)
+				default: // inner face
+					c = rampAt(baseIdx)
+				}
+				grid[gr][absCol] = lipgloss.NewStyle().Foreground(c).Render(blk)
+			}
+		}
+	}
+
+	var rows []string
+	for _, row := range grid {
+		var b strings.Builder
+		for _, cell := range row {
+			if cell == "" {
+				b.WriteString(" ")
+			} else {
+				b.WriteString(cell)
+			}
+		}
+		rows = append(rows, b.String())
+	}
+	logo := lipgloss.JoinVertical(lipgloss.Left, rows...)
+
+	// Subtitle preserved exactly.
+	tagline := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#56d364")).
+		Render("Wonder how speedy your internet is?")
+
+	return lipgloss.JoinVertical(lipgloss.Center, logo, tagline)
+}
+
+// renderHelp renders a centered help modal describing the live controls. It
+// replaces the normal card view while shown (toggle with ?).
+func (m model) renderHelp() string {
+	muted := lipgloss.NewStyle().Foreground(m.theme.Muted)
+	key := lipgloss.NewStyle().Foreground(m.theme.Highlight).Bold(true)
+
+	lines := []string{
+		key.Render("?") + "  " + muted.Render("toggle this help"),
+		key.Render("q") + "  " + muted.Render("quit"),
+		key.Render("r") + "  " + muted.Render("restart the test"),
+		key.Render("c") + "  " + muted.Render("cycle units (Mbps / KB/s / MB/s / GB/s)"),
+	}
+
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(m.theme.Highlight).
+		Padding(1, 2).
+		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+
+	ch := m.height
+	if ch <= 0 {
+		ch = 1
+	}
+	return lipgloss.Place(m.width, ch, lipgloss.Center, lipgloss.Center, panel)
 }

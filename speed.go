@@ -52,16 +52,16 @@ type clientInfo struct {
 
 // Sample is one instantaneous speed measurement broadcast to the UI each tick.
 type Sample struct {
-	Phase   Phase     // which phase produced this sample
-	Bytes   uint64    // bytes transferred so far in the current phase
-	Rate    float64   // instantaneous rate in bytes/sec
-	At      time.Time
+	Phase Phase   // which phase produced this sample
+	Bytes uint64  // bytes transferred so far in the current phase
+	Rate  float64 // instantaneous rate in bytes/sec
+	At    time.Time
 }
 
 // Progress is the live channel payload the UI consumes.
 type Progress struct {
-	URLs       []string // discovered target URLs (set once)
-	ServerName string   // human-readable server/region label (set once)
+	URLs       []string   // discovered target URLs (set once)
+	ServerName string     // human-readable server/region label (set once)
 	Phases     chan Phase // phase transitions
 	Samples    chan Sample
 	Result     chan Result
@@ -154,7 +154,7 @@ type counter struct {
 	n uint64
 }
 
-func (c *counter) add(b int)    { atomic.AddUint64(&c.n, uint64(b)) }
+func (c *counter) add(b int)     { atomic.AddUint64(&c.n, uint64(b)) }
 func (c *counter) value() uint64 { return atomic.LoadUint64(&c.n) }
 
 // runPhase opens `conn` parallel connections to the given URLs and streams

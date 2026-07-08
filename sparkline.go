@@ -1,58 +1,71 @@
 package main
 
 import (
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/lucasb-eyer/go-colorful"
 )
 
-// sparkline renders a slim, single-row history graph of speed over time,
-// using varying block heights (▁▂▃▄▅▆▇█) like the original fast.com CLI.
-// Newer samples are on the right; the tallest block is the peak seen so far.
-type sparkline struct {
-	width int
-	data  []float64 // most-recent-last
-	style lipgloss.Style
+// graph renders a vertical bar chart of recent speed samples, newest on the
+// right. Each bar is shaded with a per-cell gradient: a deep color at the base
+// blending to a brighter tip, so spikes visibly rise above their neighbours and
+// read as a "live" signal rather than a flat strip.
+type graph struct {
+	width  int
+	height int
+	data   []float64 // most-recent-last
+	bottom lipgloss.Color
+	top    lipgloss.Color
 }
 
-// sparkBlocks maps a fractional height (0..1) to a block glyph.
-var sparkBlocks = []string{" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
-
-func newSparkline(width int, _ int, color lipgloss.AdaptiveColor) *sparkline {
-	return &sparkline{
-		width: width,
-		style: lipgloss.NewStyle().Foreground(color),
+func newGraph(width, height int, bottom, top lipgloss.Color) *graph {
+	return &graph{
+		width:  width,
+		height: height,
+		bottom: bottom,
+		top:    top,
 	}
 }
 
 // push appends a value and trims the history to the visible width.
-func (s *sparkline) push(v float64) {
-	s.data = append(s.data, v)
-	if len(s.data) > s.width {
-		s.data = s.data[len(s.data)-s.width:]
+func (g *graph) push(v float64) {
+	g.data = append(g.data, v)
+	if len(g.data) > g.width {
+		g.data = g.data[len(g.data)-g.width:]
 	}
 }
 
 // setWidth resizes the visible window (used on terminal resize).
-func (s *sparkline) setWidth(w int) {
-	s.width = w
-	if len(s.data) > s.width {
-		s.data = s.data[len(s.data)-s.width:]
+func (g *graph) setWidth(w int) {
+	g.width = w
+	if len(g.data) > g.width {
+		g.data = g.data[len(g.data)-g.width:]
 	}
 }
 
-// View renders the single-row sparkline. When there is no data yet it shows
-// a faint baseline so the card layout does not jump.
-func (s *sparkline) View() string {
-	if s.width <= 0 {
+// clear wipes the history (used when resetting the test).
+func (g *graph) clear() {
+	g.data = nil
+}
+
+// View renders the chart as `height` rows, top row first. Empty cells are
+// spaces so the underlying axis line shows through.
+func (g *graph) View() string {
+	if g.width <= 0 || g.height <= 0 {
 		return ""
 	}
-	if len(s.data) == 0 {
-		return s.style.Render(strings.Repeat(" ", s.width))
+
+	// Baseline row of spaces so the card layout never jumps before data
+	// arrives.
+	if len(g.data) == 0 {
+		return strings.Repeat("\n", g.height-1) + strings.Repeat(" ", g.width)
 	}
-	min := s.data[0]
-	max := s.data[0]
-	for _, v := range s.data {
+
+	min := g.data[0]
+	max := g.data[0]
+	for _, v := range g.data {
 		if v < min {
 			min = v
 		}
@@ -60,27 +73,61 @@ func (s *sparkline) View() string {
 			max = v
 		}
 	}
+	// Floor the span so a flat trace doesn't fill the whole graph.
 	span := max - min
-	if span <= 0 {
-		mid := sparkBlocks[len(sparkBlocks)/2]
-		return s.style.Render(strings.Repeat(mid, len(s.data)) + strings.Repeat(" ", s.width-len(s.data)))
+	if span < 1e-6 {
+		span = 1e-6
 	}
 
-	var b strings.Builder
-	for col := 0; col < s.width; col++ {
+	// Height of each column in cells, newest sample on the right.
+	heights := make([]int, g.width)
+	for col := 0; col < g.width; col++ {
 		var val float64
-		if col < len(s.data) {
-			val = s.data[col]
+		if col < len(g.data) {
+			val = g.data[col]
 		}
-		// Map the value to a block level in [0, len(sparkBlocks)-1].
-		idx := int(((val - min) / span) * float64(len(sparkBlocks)-1) + 0.5)
-		if idx < 0 {
-			idx = 0
+		if val <= 0 {
+			heights[col] = 0
+			continue
 		}
-		if idx >= len(sparkBlocks) {
-			idx = len(sparkBlocks) - 1
+		h := int(math.Round((val - min) / span * float64(g.height-1)))
+		if h < 1 {
+			h = 1
 		}
-		b.WriteString(sparkBlocks[idx])
+		if h > g.height {
+			h = g.height
+		}
+		heights[col] = h
 	}
-	return s.style.Render(b.String())
+
+	// Build top-down: row 0 is the top (tallest possible bar).
+	var rows []string
+	for row := 0; row < g.height; row++ {
+		levelFromTop := g.height - 1 - row // 0 == tip level
+		var b strings.Builder
+		for col := 0; col < g.width; col++ {
+			h := heights[col]
+			if h > 0 && levelFromTop < h {
+				// t goes 0 (base) -> 1 (tip); tip is brightest.
+				t := float64(h-1-levelFromTop) / float64(h)
+				b.WriteString(lipgloss.NewStyle().Foreground(lerpColor(g.bottom, g.top, t)).Render("█"))
+			} else {
+				b.WriteString(" ")
+			}
+		}
+		rows = append(rows, b.String())
+	}
+	return strings.Join(rows, "\n")
+}
+
+// lerpColor blends from a to b by t in [0,1] in the OKLCH-ish RGB space and
+// returns the result as a hex lipgloss.Color.
+func lerpColor(a, b lipgloss.Color, t float64) lipgloss.Color {
+	ca, errA := colorful.Hex(string(a))
+	cb, errB := colorful.Hex(string(b))
+	if errA != nil || errB != nil {
+		return a
+	}
+	blended := ca.BlendRgb(cb, t)
+	return lipgloss.Color(blended.Hex())
 }
