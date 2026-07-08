@@ -1,4 +1,4 @@
-module github.com/rohli/speed
+module github.com/Foxemsx/speed
 
 go 1.23
 
