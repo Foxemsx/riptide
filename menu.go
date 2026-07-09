@@ -339,9 +339,7 @@ func (m *menuModel) View() string {
 	if ch <= 0 {
 		ch = 30
 	}
-	placed := lipgloss.Place(m.width, ch, lipgloss.Center, lipgloss.Center, stack)
-
-	return placed
+	return paintScreen(m.theme, m.width, ch, stack)
 }
 
 // renderBox draws one modern menu button. Selected buttons get a solid

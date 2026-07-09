@@ -536,3 +536,111 @@ func renderCompactHeader(tagline string) string {
 		Render(tagline)
 	return tag
 }
+
+// helpBinding is one key → action row for the help modal.
+type helpBinding struct {
+	keys   string
+	action string
+}
+
+// renderHelpPanel draws a polished centered help modal shared by speed test
+// and bandwidth screens. Every style carries the panel fill so nested SGR
+// resets cannot punch holes in the background.
+func renderHelpPanel(theme Theme, title string, bindings []helpBinding, width, height int) string {
+	const (
+		innerW = 42 // content width inside padding
+		keyCol = 12
+	)
+	bg := theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+
+	// Base styles always re-apply the panel fill.
+	plain := lipgloss.NewStyle().Background(bg)
+	fg := func(c lipgloss.TerminalColor, bold bool) lipgloss.Style {
+		s := lipgloss.NewStyle().Foreground(c).Background(bg)
+		if bold {
+			s = s.Bold(true)
+		}
+		return s
+	}
+	// Full-width line with continuous background.
+	line := func(parts ...string) string {
+		return lipgloss.NewStyle().
+			Width(innerW).
+			Background(bg).
+			Inline(true).
+			Render(strings.Join(parts, ""))
+	}
+
+	titleChip := lipgloss.NewStyle().
+		Foreground(ink).
+		Background(theme.Highlight).
+		Bold(true).
+		Padding(0, 1).
+		Render(title)
+
+	keyChip := func(keys string) string {
+		return lipgloss.NewStyle().
+			Foreground(ink).
+			Background(theme.Download).
+			Bold(true).
+			Padding(0, 1).
+			Render(keys)
+	}
+
+	row := func(keys, action string) string {
+		chip := keyChip(keys)
+		pad := keyCol - lipgloss.Width(chip)
+		if pad < 1 {
+			pad = 1
+		}
+		return line(
+			chip,
+			plain.Render(strings.Repeat(" ", pad)),
+			fg(theme.Foreground, false).Render(action),
+		)
+	}
+
+	// Split navigation (back/quit/help) from the rest of the controls.
+	var nav, controls []helpBinding
+	for _, b := range bindings {
+		k := strings.ToLower(b.keys)
+		if strings.Contains(k, "esc") || k == "q" || k == "?" || k == "m" {
+			nav = append(nav, b)
+		} else {
+			controls = append(controls, b)
+		}
+	}
+
+	var body []string
+	body = append(body, line(titleChip))
+	body = append(body, line(""))
+	body = append(body, line(fg(theme.Download, true).Render("Navigation")))
+	body = append(body, line(fg(theme.Border, false).Render(strings.Repeat("─", 28))))
+	for _, b := range nav {
+		body = append(body, row(b.keys, b.action))
+	}
+	if len(controls) > 0 {
+		body = append(body, line(""))
+		body = append(body, line(fg(theme.Download, true).Render("Controls")))
+		body = append(body, line(fg(theme.Border, false).Render(strings.Repeat("─", 28))))
+		for _, b := range controls {
+			body = append(body, row(b.keys, b.action))
+		}
+	}
+	body = append(body, line(""))
+	body = append(body, line(fg(theme.Muted, false).Render("Press  ?  or  esc  to close this help")))
+	body = append(body, line(fg(theme.Muted, false).Render("Press  esc  or  m  to return to the main menu")))
+
+	content := strings.Join(body, "\n")
+	panel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Highlight).
+		Background(bg).
+		Padding(1, 2).
+		// Width includes padding so the fill matches the border box.
+		Width(innerW + 4).
+		Render(content)
+
+	return paintScreen(theme, width, height, panel)
+}

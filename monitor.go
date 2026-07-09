@@ -234,6 +234,7 @@ func (m *monitorModel) View() string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Border).
+		Background(m.theme.AppBg).
 		Padding(1, 2).
 		Width(m.cardWidthFor()).
 		Render(body.String())
@@ -250,39 +251,22 @@ func (m *monitorModel) View() string {
 		card,
 	)
 
-	placed := lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, stack)
-
 	if m.showHelp {
 		return m.renderHelp()
 	}
 
-	return placed
+	return paintScreen(m.theme, m.width, m.height, stack)
 }
 
 // renderHelp renders the monitor's control help modal.
 func (m *monitorModel) renderHelp() string {
-	muted := lipgloss.NewStyle().Foreground(m.theme.Muted)
-	key := lipgloss.NewStyle().Foreground(m.theme.Highlight).Bold(true)
-
-	lines := []string{
-		key.Render("?") + "  " + muted.Render("toggle this help"),
-		key.Render("esc / m") + "  " + muted.Render("back to the menu"),
-		key.Render("q") + "  " + muted.Render("quit"),
-		key.Render("c") + "  " + muted.Render("cycle units (Mbps / KB/s / MB/s / GB/s)"),
-		key.Render("p") + "  " + muted.Render("pause / resume the monitor"),
-		key.Render("r") + "  " + muted.Render("restart the monitor"),
-		key.Render("t") + "  " + muted.Render("toggle compact mode (skip the large logo)"),
-	}
-
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Highlight).
-		Padding(1, 2).
-		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-
-	ch := m.height
-	if ch <= 0 {
-		ch = 1
-	}
-	return lipgloss.Place(m.width, ch, lipgloss.Center, lipgloss.Center, panel)
+	return renderHelpPanel(m.theme, "Bandwidth — Help", []helpBinding{
+		{keys: "esc / m", action: "back to main menu"},
+		{keys: "?", action: "close this help"},
+		{keys: "q", action: "quit riptide"},
+		{keys: "p", action: "pause / resume monitoring"},
+		{keys: "r", action: "restart the monitor"},
+		{keys: "c", action: "cycle units  Mbps · KB/s · MB/s · GB/s"},
+		{keys: "t", action: "toggle compact logo"},
+	}, m.width, m.height)
 }

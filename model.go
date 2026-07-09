@@ -281,6 +281,7 @@ func (m *model) View() string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(m.theme.Border).
+		Background(m.theme.AppBg).
 		Padding(1, 2).
 		Width(m.cardWidthFor()).
 		Render(body.String())
@@ -298,19 +299,12 @@ func (m *model) View() string {
 		card,
 	)
 
-	// Center the whole stack both horizontally and vertically in the terminal.
-	placed := lipgloss.Place(
-		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		stack,
-	)
-
 	// Help overlay (modal) is drawn when toggled.
 	if m.showHelp {
 		return m.renderHelp()
 	}
 
-	return placed
+	return paintScreen(m.theme, m.width, m.height, stack)
 }
 
 // summaryLine shows the final download / upload / ping on one line, with ping
@@ -353,27 +347,12 @@ func (m *model) summaryLine() string {
 // renderHelp renders a centered help modal describing the live controls. It
 // replaces the normal card view while shown (toggle with ?).
 func (m *model) renderHelp() string {
-	muted := lipgloss.NewStyle().Foreground(m.theme.Muted)
-	key := lipgloss.NewStyle().Foreground(m.theme.Highlight).Bold(true)
-
-	lines := []string{
-		key.Render("?") + "  " + muted.Render("toggle this help"),
-		key.Render("esc / m") + "  " + muted.Render("back to the menu"),
-		key.Render("q") + "  " + muted.Render("quit"),
-		key.Render("r") + "  " + muted.Render("restart the test"),
-		key.Render("c") + "  " + muted.Render("cycle units (Mbps / KB/s / MB/s / GB/s)"),
-		key.Render("t") + "  " + muted.Render("toggle compact mode (skip the large logo)"),
-	}
-
-	panel := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(m.theme.Highlight).
-		Padding(1, 2).
-		Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
-
-	ch := m.height
-	if ch <= 0 {
-		ch = 1
-	}
-	return lipgloss.Place(m.width, ch, lipgloss.Center, lipgloss.Center, panel)
+	return renderHelpPanel(m.theme, "Speed Test — Help", []helpBinding{
+		{keys: "esc / m", action: "back to main menu"},
+		{keys: "?", action: "close this help"},
+		{keys: "q", action: "quit riptide"},
+		{keys: "r", action: "restart the speed test"},
+		{keys: "c", action: "cycle units  Mbps · KB/s · MB/s · GB/s"},
+		{keys: "t", action: "toggle compact logo"},
+	}, m.width, m.height)
 }

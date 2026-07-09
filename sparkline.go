@@ -245,7 +245,8 @@ func dimColor(c lipgloss.Color, amount float64) lipgloss.Color {
 	if amount < 0 {
 		amount = 0
 	}
-	return lerpColor(lipgloss.Color("#0d1117"), c, amount)
+	// Blend toward the app canvas so empty graph cells match the UI chrome.
+	return lerpColor(lipgloss.Color("#191a1b"), c, amount)
 }
 
 // easeOutQuad pushes more of the gradient toward the bright tip.
