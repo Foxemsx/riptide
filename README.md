@@ -16,7 +16,8 @@ modes:
 Both modes render a centered card UI with live progress and smooth
 gradient graphs.
 
-![Showcase GIF](assets/showcase.gif)
+<!-- `?v=` busts GitHub's camo CDN cache when assets are replaced in-place -->
+![Showcase GIF](assets/showcase.gif?v=2)
 
 ---
 
@@ -24,11 +25,11 @@ gradient graphs.
 
 | Main menu                          | Speed Test (in progress)          | Finished (summary)                |
 | ---------------------------------- | --------------------------------- | --------------------------------- |
-| ![Main menu](assets/mainmenu.png)  | ![Home](assets/home.png)          | ![Finished](assets/finished.png)  |
+| ![Main menu](assets/mainmenu.png?v=2)  | ![Home](assets/home.png?v=2)          | ![Finished](assets/finished.png?v=2)  |
 
 | Bandwidth Monitor                  | Help menu (`?`)                    |
 | ---------------------------------- | ---------------------------------- |
-| ![Bandwidth](assets/bandwidth.png) | ![Help menu](assets/helpmenu.png)  |
+| ![Bandwidth](assets/bandwidth.png?v=2) | ![Help menu](assets/helpmenu.png?v=2)  |
 
 - **Main menu** — pick a mode: Speed Test, Bandwidth Monitor, or Exit.
   Navigate with the keyboard or click a box.
