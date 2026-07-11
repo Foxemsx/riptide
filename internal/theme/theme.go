@@ -174,11 +174,15 @@ func PaintScreen(t Theme, width, height int, content string) string {
 		}
 		content = strings.Join(lines, "\n")
 	}
+	var opts []lipgloss.WhitespaceOption
+	if !TransparentBg.Load() {
+		opts = append(opts, lipgloss.WithWhitespaceBackground(t.AppBg))
+	}
 	return lipgloss.Place(
 		width, height,
 		lipgloss.Center, lipgloss.Center,
 		content,
-		lipgloss.WithWhitespaceBackground(t.AppBg),
+		opts...,
 	)
 }
 
