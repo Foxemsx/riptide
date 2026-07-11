@@ -45,7 +45,8 @@ detect_platform() {
   local os arch
   case "$(uname -s)" in
     Linux)  os="linux" ;;
-    *)      echo "Unsupported OS: $(uname -s). riptide supports Linux and Windows only." >&2; exit 1 ;;
+    Darwin) os="darwin" ;;
+    *)      echo "Unsupported OS: $(uname -s). riptide supports Linux, macOS and Windows only." >&2; exit 1 ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64)   arch="amd64" ;;
