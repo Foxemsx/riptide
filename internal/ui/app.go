@@ -15,6 +15,7 @@ type App struct {
 	theme   apptheme.Theme
 	compact bool
 	store   *db.Store
+	version string
 
 	width  int
 	height int
@@ -30,13 +31,17 @@ type App struct {
 }
 
 // NewApp builds the root model for the riptide TUI.
-func NewApp(t apptheme.Theme, compact bool, store *db.Store) *App {
+func NewApp(t apptheme.Theme, compact bool, store *db.Store, version string) *App {
+	if version == "" {
+		version = "dev"
+	}
 	a := &App{
 		theme:   t,
 		compact: compact,
 		store:   store,
+		version: version,
 		screen:  screenMenu,
-		menu:    newMenuModel(t, compact),
+		menu:    newMenuModel(t, compact, version),
 	}
 	a.reloadHistory()
 	return a
@@ -87,7 +92,7 @@ func (a *App) enter(s screenID) tea.Cmd {
 		a.screen = screenMonitor
 		return a.monitor.Start()
 	case screenSettings:
-		a.settings = newSettingsModel(a.theme, a.compact, a.store)
+		a.settings = newSettingsModel(a.theme, a.compact, a.store, a.version)
 		a.settings.width = a.width
 		a.settings.height = a.height
 		a.screen = screenSettings

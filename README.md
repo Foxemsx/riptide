@@ -21,9 +21,9 @@ A polished Go TUI with a startup menu, one-shot speed tests, a live bandwidth mo
 
 | | |
 |:---|:---|
-| **Speed Test** | One-shot download, upload, and ping. Parallel connections, peak rates, timed phases. Auto-saves runs; compare the latest 10. |
-| **Bandwidth Monitor** | Live view of *real* PC traffic (OS counters only — no test load). Peaks, uptime, pause. |
-| **Settings** | Searchable settings: 11 color themes, database reset, uninstall instructions. |
+| **Speed Test** | One-shot download, upload, and ping. Parallel connections, peak rates, timed phases. Auto-saves runs; average + "Good for" insight; compare the latest 10. |
+| **Bandwidth Monitor** | Live view of *real* PC traffic (OS counters only — no test load). Peaks, uptime, pause, and an Apps panel showing what's using bandwidth now. |
+| **Settings** | Searchable settings: 20 color themes, About & Support, database reset, uninstall instructions. |
 
 ---
 
@@ -69,8 +69,14 @@ A polished Go TUI with a startup menu, one-shot speed tests, a live bandwidth mo
 
 - **Startup menu** — 2×2 card grid with hotkeys `1`–`4`, keyboard or mouse
 - **Speed history** — auto-saves completed tests; press `s` to name a run; latest 10 shown for comparison
-- **11 themes** — default, ocean, midnight, sunset, forest, rose, nord, dracula, cyber, ember, arctic (Settings or `--theme`)
+- **Average & record insight** — *Your usual average* block summarizes mean ↓/↑/ping across all saved runs
+- **"Good for" verdict** — grades your connection Perfect/Good/Fair/Bad for Gaming, 4K, 2K, 1080p and Video calls, plus real transfer-time estimates ("100 GB game ≈ 53m")
+- **Copy result** — press `y` to copy `↓248 ↑19 12ms` to the clipboard
+- **20 themes** — default, ocean, midnight, sunset, forest, rose, nord, dracula, cyber, ember, arctic, gruvbox, tokyo, catppuccin, solarized, rosepine, monokai, onedark, github, everforest (Settings or `--theme`)
 - **Settings search** — filter themes & sections; `enter` jumps to the best match
+- **About & Support** — new Settings section with version, GitHub ★, and Buy me a coffee
+- **Update checker** — main menu shows an *Up to date* / *Update available* chip (click or `g` opens GitHub)
+- **Apps using bandwidth** — Bandwidth monitor can list which apps are active on the network right now (`a`)
 - **SQLite store** — preferences + test runs in `riptide.db` (user config dir)
 - **High-res graphs** — eighth-block bars, fire gradients, peak spark, age fade
 - **Smooth numbers** — lerped display values instead of hard snaps
@@ -151,10 +157,13 @@ riptide --theme ocean  # start with a palette (also saved as preference)
 | `1` `2` `3` `4` | Jump to Speed Test / Bandwidth / Settings / Exit |
 | `enter` | Select |
 | `s` | **Speed Test** — save / rename the current run |
+| `y` | **Speed Test** — copy result as `↓248 ↑19 12ms` |
 | `c` | Cycle units |
 | `r` | Restart test / monitor |
 | `p` | Pause / resume (**Bandwidth** only) |
+| `a` | **Bandwidth** — toggle the Apps using bandwidth panel |
 | `t` | Toggle compact logo |
+| `g` | Open the project on GitHub (menu & settings) |
 | `?` | Help overlay |
 | `esc` / `m` | Back to main menu |
 | `q` / `ctrl+c` | Quit |
@@ -166,8 +175,10 @@ riptide --theme ocean  # start with a palette (also saved as preference)
 | type | Filter themes & sections live |
 | `enter` | Jump to best match (or apply a matched theme) |
 | `tab` | Next section |
+| `1`–`4` | Jump to Themes / Reset / Uninstall / About |
 | `←` `→` / `j` `k` | Browse themes |
 | `enter` on theme | Apply & save theme |
+| `enter` on About | Open Buy me a coffee (or `b`) |
 | `enter` on Reset | Confirm wipe of saved runs |
 
 ---
@@ -187,6 +198,15 @@ riptide --theme ocean  # start with a palette (also saved as preference)
 | `cyber` | Neon green · hot magenta |
 | `ember` | Charcoal fire · molten gold |
 | `arctic` | Ice blue · clean slate |
+| `gruvbox` | Warm retro · earth tones |
+| `tokyo` | Tokyo Night · neon anime dusk |
+| `catppuccin` | Soft pastel mocha |
+| `solarized` | Classic dark precision |
+| `rosepine` | Dusty dawn calm |
+| `monokai` | Vivid code-editor heat |
+| `onedark` | Editor default comfort |
+| `github` | Exactly like the site |
+| `everforest` | Calm muted woodland |
 
 Theme preference is stored in the local database (overridden by `--theme` for that launch).
 

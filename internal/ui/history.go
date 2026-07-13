@@ -138,6 +138,337 @@ func historyBlock(theme apptheme.Theme, runs []db.TestRun, width int, unit unitM
 		Render(content)
 }
 
+// averageBlock renders a polished "Your usual average" card for the speed-test
+// view, summarizing the mean download / upload / ping across all saved runs.
+func averageBlock(theme apptheme.Theme, avg db.Averages, unit unitMode, width int) string {
+	if width < 28 {
+		width = 28
+	}
+	bg := theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+
+	plain := lipgloss.NewStyle().Background(bg)
+	fg := func(c lipgloss.TerminalColor, bold bool) lipgloss.Style {
+		s := lipgloss.NewStyle().Foreground(c).Background(bg)
+		if bold {
+			s = s.Bold(true)
+		}
+		return s
+	}
+	innerW := width - 4
+	if innerW < 24 {
+		innerW = 24
+	}
+	line := func(parts ...string) string {
+		return lipgloss.NewStyle().
+			Width(innerW).
+			Background(bg).
+			Inline(true).
+			Render(strings.Join(parts, ""))
+	}
+
+	titleChip := lipgloss.NewStyle().
+		Foreground(ink).
+		Background(theme.AccentHL).
+		Bold(true).
+		Padding(0, 1).
+		Render("Your usual average")
+
+	var body []string
+	body = append(body, line(
+		titleChip,
+		plain.Render(" "),
+		fg(theme.Muted, false).Render("all saved runs"),
+	))
+	body = append(body, line(fg(theme.Border, false).Render(strings.Repeat("─", min(innerW, 48)))))
+
+	if avg.Count == 0 {
+		body = append(body, line(fg(theme.Muted, false).Render("No runs yet — finish a test")))
+		body = append(body, line(fg(theme.Muted, false).Render("to see your average.")))
+	} else {
+		ulab := unit.short()
+		dl := fmtSpeedUnit(avg.DownloadMbps, unit)
+		ul := fmtSpeedUnit(avg.UploadMbps, unit)
+		pg := fmt.Sprintf("%.0f ms", avg.PingMs)
+		val := lipgloss.JoinHorizontal(lipgloss.Center,
+			fg(theme.Download, true).Render("↓ "+dl),
+			plain.Render("   "),
+			fg(theme.Upload, true).Render("↑ "+ul),
+			plain.Render("   "),
+			fg(theme.Latency, true).Render("◷ "+pg),
+		)
+		body = append(body, line(val))
+		body = append(body, line(fg(theme.Muted, false).Render(
+			fmt.Sprintf("over %d run%s · in %s", avg.Count, plural(avg.Count), ulab),
+		)))
+	}
+
+	content := strings.Join(body, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Border).
+		Background(bg).
+		Padding(0, 1).
+		Width(width).
+		Render(content)
+}
+
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// qualityBad is the accent for a failing verdict (no adaptive red in the theme).
+var qualityBad = lipgloss.Color("#ff6b6b")
+
+// qualityBlock grades your connection against common real-world activities and
+// shows whether it is Perfect / Good / Fair / Bad for each. Grades use widely
+// published bandwidth needs (Netflix 4K ≈ 25 Mbps, 2K ≈ 15 Mbps, 1080p ≈ 8 Mbps,
+// HD video calls ≈ 4 Mbps up+down) and ping for gaming (≤20ms great, ≤50ms ok).
+func qualityBlock(theme apptheme.Theme, dl, ul, ping float64, hasData bool, width int) string {
+	if width < 28 {
+		width = 28
+	}
+	bg := theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+
+	plain := lipgloss.NewStyle().Background(bg)
+	fg := func(c lipgloss.TerminalColor, bold bool) lipgloss.Style {
+		s := lipgloss.NewStyle().Foreground(c).Background(bg)
+		if bold {
+			s = s.Bold(true)
+		}
+		return s
+	}
+	innerW := width - 4
+	if innerW < 24 {
+		innerW = 24
+	}
+	line := func(parts ...string) string {
+		return lipgloss.NewStyle().
+			Width(innerW).
+			Background(bg).
+			Inline(true).
+			Render(strings.Join(parts, ""))
+	}
+
+	titleChip := lipgloss.NewStyle().
+		Foreground(ink).
+		Background(theme.AccentLat).
+		Bold(true).
+		Padding(0, 1).
+		Render("Good for")
+
+	var body []string
+	body = append(body, line(
+		titleChip,
+		plain.Render(" "),
+		fg(theme.Muted, false).Render("your average connection"),
+	))
+	body = append(body, line(fg(theme.Border, false).Render(strings.Repeat("─", min(innerW, 48)))))
+
+	if !hasData {
+		body = append(body, line(fg(theme.Muted, false).Render("Finish a test to see what")))
+		body = append(body, line(fg(theme.Muted, false).Render("your connection handles.")))
+		content := strings.Join(body, "\n")
+		return lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(theme.Border).
+			Background(bg).
+			Padding(0, 1).
+			Width(width).
+			Render(content)
+	}
+
+	// Subtitle with the basis values.
+	sub := fmt.Sprintf("↓ %.0f · ↑ %.0f · %.0fms", dl, ul, ping)
+	body = append(body, line(fg(theme.Muted, false).Render(sub)))
+	body = append(body, line(""))
+
+	nameW := innerW - 12
+	if nameW < 10 {
+		nameW = 10
+	}
+	for _, a := range []string{"gaming", "4k", "2k", "1080p", "calls"} {
+		label, color := gradeActivity(theme, dl, ul, ping, a)
+		sym := "✗"
+		switch label {
+		case "Perfect", "Good":
+			sym = "✓"
+		case "Fair":
+			sym = "~"
+		}
+		disp := activityLabel(a)
+		row := lipgloss.JoinHorizontal(lipgloss.Left,
+			fg(color, true).Render(sym+" "),
+			fg(theme.Foreground, false).Render(padRight(disp, nameW)),
+			fg(color, true).Render(label),
+		)
+		body = append(body, line(row))
+	}
+
+	// Tangible time estimates from your actual speeds.
+	body = append(body, line(""))
+	body = append(body, line(fg(theme.Muted, true).Render("at your speed")))
+	labelW := innerW - 14
+	if labelW < 10 {
+		labelW = 10
+	}
+	type est struct {
+		dir   string
+		label string
+		gb    float64
+		speed float64
+		col   lipgloss.TerminalColor
+	}
+	for _, e := range []est{
+		{"↓", "100 GB game", 100, dl, theme.Download},
+		{"↓", "25 GB 4K movie", 25, dl, theme.Download},
+		{"↑", "1 GB file", 1, ul, theme.Upload},
+		{"↑", "10 GB backup", 10, ul, theme.Upload},
+	} {
+		if e.speed <= 0 {
+			continue
+		}
+		row := lipgloss.JoinHorizontal(lipgloss.Left,
+			fg(e.col, true).Render(e.dir+" "),
+			fg(theme.Foreground, false).Render(padRight(e.label, labelW)),
+			fg(theme.Muted, false).Render("≈ "+estimateDuration(e.gb, e.speed)),
+		)
+		body = append(body, line(row))
+	}
+
+	content := strings.Join(body, "\n")
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(theme.Border).
+		Background(bg).
+		Padding(0, 1).
+		Width(width).
+		Render(content)
+}
+
+// estimateDuration returns a human transfer time for gb at the given Mbps.
+func estimateDuration(gb, mbps float64) string {
+	if mbps <= 0 {
+		return "—"
+	}
+	secs := (gb * 1e9) / (mbps * 125000)
+	if secs < 1 {
+		return "<1s"
+	}
+	if secs < 60 {
+		return fmt.Sprintf("%.0fs", secs)
+	}
+	if secs < 3600 {
+		m := int(secs / 60)
+		s := int(secs) % 60
+		if s == 0 {
+			return fmt.Sprintf("%dm", m)
+		}
+		return fmt.Sprintf("%dm %ds", m, s)
+	}
+	if secs < 86400 {
+		h := int(secs / 3600)
+		m := int(secs/60) % 60
+		if m == 0 {
+			return fmt.Sprintf("%dh", h)
+		}
+		return fmt.Sprintf("%dh %dm", h, m)
+	}
+	d := int(secs / 86400)
+	h := int(secs/3600) % 24
+	if h == 0 {
+		return fmt.Sprintf("%dd", d)
+	}
+	return fmt.Sprintf("%dd %dh", d, h)
+}
+
+func activityLabel(a string) string {
+	switch a {
+	case "gaming":
+		return "Gaming"
+	case "4k":
+		return "4K video"
+	case "2k":
+		return "2K video"
+	case "1080p":
+		return "1080p video"
+	case "calls":
+		return "Video calls"
+	}
+	return a
+}
+
+// gradeActivity returns a verdict word and its accent color for one activity.
+func gradeActivity(theme apptheme.Theme, dl, ul, ping float64, kind string) (string, lipgloss.TerminalColor) {
+	switch kind {
+	case "gaming":
+		// Latency dominates; a little bandwidth is enough.
+		switch {
+		case ping <= 20 && dl >= 10:
+			return "Perfect", theme.Highlight
+		case ping <= 50 && dl >= 10:
+			return "Good", theme.Download
+		case ping <= 100:
+			return "Fair", theme.Upload
+		default:
+			return "Bad", qualityBad
+		}
+	case "4k":
+		// Netflix recommends 25 Mbps for UHD 4K.
+		switch {
+		case dl >= 50:
+			return "Perfect", theme.Highlight
+		case dl >= 25:
+			return "Good", theme.Download
+		case dl >= 15:
+			return "Fair", theme.Upload
+		default:
+			return "Bad", qualityBad
+		}
+	case "2k":
+		// ~15 Mbps for 1440p.
+		switch {
+		case dl >= 30:
+			return "Perfect", theme.Highlight
+		case dl >= 15:
+			return "Good", theme.Download
+		case dl >= 8:
+			return "Fair", theme.Upload
+		default:
+			return "Bad", qualityBad
+		}
+	case "1080p":
+		// ~8 Mbps for 1080p.
+		switch {
+		case dl >= 15:
+			return "Perfect", theme.Highlight
+		case dl >= 8:
+			return "Good", theme.Download
+		case dl >= 4:
+			return "Fair", theme.Upload
+		default:
+			return "Bad", qualityBad
+		}
+	case "calls":
+		// ~4 Mbps up+down for HD video calls.
+		switch {
+		case ul >= 10 && dl >= 10:
+			return "Perfect", theme.Highlight
+		case ul >= 4 && dl >= 4:
+			return "Good", theme.Download
+		case ul >= 2 && dl >= 2:
+			return "Fair", theme.Upload
+		default:
+			return "Bad", qualityBad
+		}
+	}
+	return "—", theme.Muted
+}
+
 // short is a compact unit label for tight column headers.
 func (u unitMode) short() string {
 	switch u {

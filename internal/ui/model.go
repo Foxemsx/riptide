@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/atotto/clipboard"
 	"github.com/Foxemsx/riptide/internal/db"
 	"github.com/Foxemsx/riptide/internal/engine"
 	apptheme "github.com/Foxemsx/riptide/internal/theme"
@@ -24,9 +25,11 @@ type model struct {
 
 	store      *db.Store
 	history    []db.TestRun
+	avg        db.Averages
 	savePrompt savePromptModel
 	autoSaved  bool
 	savedFlash string
+	copiedFlash string
 }
 
 func newTestModel(cs *cardState, store *db.Store) *model {
@@ -35,8 +38,19 @@ func newTestModel(cs *cardState, store *db.Store) *model {
 		store:      store,
 		savePrompt: newSavePrompt(cs.theme, "speed"),
 	}
+	m.loadAverages()
 	m.testStart = time.Now()
 	return m
+}
+
+// loadAverages refreshes the saved-run averages from the DB (best-effort).
+func (m *model) loadAverages() {
+	if m.store == nil {
+		return
+	}
+	if a, err := m.store.Averages("speed"); err == nil {
+		m.avg = a
+	}
 }
 
 func (m *model) Start() tea.Cmd {
@@ -66,9 +80,11 @@ func (m *model) reset() tea.Cmd {
 	m.quitting = false
 	m.autoSaved = false
 	m.savedFlash = ""
+	m.copiedFlash = ""
 	m.history = hist
 	m.store = store
 	m.savePrompt = newSavePrompt(m.theme, "speed")
+	m.loadAverages()
 	m.savePrompt.width = w
 	m.savePrompt.height = h
 
@@ -115,6 +131,8 @@ func (m *model) Update(msg tea.Msg) (tea.Cmd, bool) {
 		case "c":
 			m.unit = (m.unit + 1) % 4
 			return nil, false
+		case "y":
+			return m.copyResultCmd(), false
 		case "s":
 			// Named save of current/final numbers.
 			dl := m.result.DownloadMbps
@@ -210,6 +228,10 @@ func (m *model) Update(msg tea.Msg) (tea.Cmd, bool) {
 			m.cancel()
 		}
 		return nil, false
+
+	case copyDoneMsg:
+		m.applyCopyFlash(msg.text)
+		return nil, false
 	}
 	return nil, false
 }
@@ -222,6 +244,7 @@ func (m *model) autoSaveCmd() tea.Cmd {
 		return nil
 	}
 	m.autoSaved = true
+	m.loadAverages()
 	run := db.TestRun{
 		Name:         db.AutoName("speed", time.Now()),
 		Kind:         "speed",
@@ -238,6 +261,35 @@ func (m *model) autoSaveCmd() tea.Cmd {
 
 func textinputBlink() tea.Cmd {
 	return func() tea.Msg { return nil }
+}
+
+// resultValues returns the most representative ↓/↑/ping to show or copy:
+// prefer the finished result, else the live displayed values.
+func (m *model) resultValues() (dl, ul, ping float64) {
+	if m.gotResult {
+		return m.result.DownloadMbps, m.result.UploadMbps, m.result.PingMs
+	}
+	return m.dlDisplay, m.ulDisplay, m.pingDisp
+}
+
+// copyResultCmd copies the result as "↓248 ↑19 12ms" to the system clipboard.
+func (m *model) copyResultCmd() tea.Cmd {
+	dl, ul, ping := m.resultValues()
+	if dl <= 0 && ul <= 0 && ping <= 0 {
+		return nil
+	}
+	text := fmt.Sprintf("↓%.0f ↑%.0f %.0fms", dl, ul, ping)
+	t := text
+	return func() tea.Msg {
+		_ = clipboard.WriteAll(t)
+		return copyDoneMsg{text: t}
+	}
+}
+
+type copyDoneMsg struct{ text string }
+
+func (m *model) applyCopyFlash(text string) {
+	m.copiedFlash = "Copied  " + text
 }
 
 func (m *model) advance() {
@@ -310,7 +362,10 @@ func (m *model) View() string {
 
 	body.WriteString(m.summaryLine())
 
-	if m.savedFlash != "" {
+	if m.copiedFlash != "" {
+		body.WriteString("\n")
+		body.WriteString(center(lipgloss.NewStyle().Foreground(m.theme.Highlight).Render(m.copiedFlash), m.cardWidthFor()))
+	} else if m.savedFlash != "" {
 		body.WriteString("\n")
 		body.WriteString(center(lipgloss.NewStyle().Foreground(m.theme.Highlight).Render("✓ "+m.savedFlash), m.cardWidthFor()))
 	}
@@ -320,6 +375,7 @@ func (m *model) View() string {
 	hint := lipgloss.JoinHorizontal(lipgloss.Center,
 		hl.Render("esc"), mt.Render(" menu  ·  "),
 		hl.Render("s"), mt.Render(" save  ·  "),
+		hl.Render("y"), mt.Render(" copy  ·  "),
 		hl.Render("r"), mt.Render(" reset  ·  "),
 		hl.Render("c"), mt.Render(" units  ·  "),
 		hl.Render("?"), mt.Render(" help"),
@@ -350,6 +406,26 @@ func (m *model) View() string {
 	}
 	hist := historyBlock(m.theme, m.history, histW, m.unit, "")
 
+	avgW := histW
+	if !sideBySide {
+		// Match the speed card width when stacked.
+		avgW = m.cardWidthFor()
+	}
+	avg := averageBlock(m.theme, m.avg, m.unit, avgW)
+
+	// Quality block is based on your average internet (or the latest run when
+	// you have no saved history yet).
+	var qDl, qUl, qPing float64
+	hasQ := false
+	if m.avg.Count > 0 {
+		qDl, qUl, qPing = m.avg.DownloadMbps, m.avg.UploadMbps, m.avg.PingMs
+		hasQ = true
+	} else if m.gotResult {
+		qDl, qUl, qPing = m.result.DownloadMbps, m.result.UploadMbps, m.result.PingMs
+		hasQ = qDl > 0 || qUl > 0 || qPing > 0
+	}
+	quality := qualityBlock(m.theme, qDl, qUl, qPing, hasQ, avgW)
+
 	var header string
 	if m.compact {
 		header = renderCompactHeader("Wonder how speedy your internet is?")
@@ -359,13 +435,14 @@ func (m *model) View() string {
 
 	var main string
 	if sideBySide {
+		right := lipgloss.JoinVertical(lipgloss.Top, hist, "", avg, "", quality)
 		main = lipgloss.JoinHorizontal(lipgloss.Top,
 			card,
 			lipgloss.NewStyle().Width(2).Render(" "),
-			hist,
+			right,
 		)
 	} else {
-		main = lipgloss.JoinVertical(lipgloss.Center, card, "", hist)
+		main = lipgloss.JoinVertical(lipgloss.Center, card, "", hist, "", avg, "", quality)
 	}
 
 	stack := lipgloss.JoinVertical(lipgloss.Center,
@@ -424,6 +501,7 @@ func (m *model) renderHelp() string {
 		{keys: "s", action: "save run with a custom name"},
 		{keys: "r", action: "restart the speed test"},
 		{keys: "c", action: "cycle units  Mbps · KB/s · MB/s · GB/s"},
+		{keys: "y", action: "copy result as  ↓248 ↑19 12ms  to clipboard"},
 		{keys: "t", action: "toggle compact logo"},
 	}, m.width, m.height)
 }

@@ -19,6 +19,12 @@ const (
 	focusThemes
 	focusReset
 	focusUninstall
+	focusAbout
+)
+
+const (
+	aboutGitHubURL = "https://github.com/Foxemsx/riptide"
+	aboutBMCURL    = "https://buymeacoffee.com/foxemsx"
 )
 
 type settingsModel struct {
@@ -27,6 +33,7 @@ type settingsModel struct {
 	width   int
 	height  int
 	store   *db.Store
+	version string
 
 	search textinput.Model
 	focus  settingsFocus
@@ -42,12 +49,14 @@ type settingsModel struct {
 
 	dbPath   string
 	runCount int
+
+	aboutHover int // 0 none, 1 github, 2 bmc
 }
 
 type themeChangedMsg struct{ name string }
 type dbResetMsg struct{}
 
-func newSettingsModel(theme apptheme.Theme, compact bool, store *db.Store) *settingsModel {
+func newSettingsModel(theme apptheme.Theme, compact bool, store *db.Store, version string) *settingsModel {
 	ti := textinput.New()
 	ti.Placeholder = "themes, reset, uninstall…"
 	ti.CharLimit = 40
@@ -63,11 +72,15 @@ func newSettingsModel(theme apptheme.Theme, compact bool, store *db.Store) *sett
 			break
 		}
 	}
+	if version == "" {
+		version = "dev"
+	}
 
 	m := &settingsModel{
 		theme:      theme,
 		compact:    compact,
 		store:      store,
+		version:    version,
 		search:     ti,
 		focus:      focusSearch,
 		themeNames: names,
@@ -144,7 +157,8 @@ func (m *settingsModel) isSectionQuery() bool {
 	}
 	return tokenMatch(q, "theme", "themes", "color", "palette", "look",
 		"reset", "database", "db", "wipe", "clear", "history", "runs", "data",
-		"uninstall", "remove", "install", "linux", "windows", "manual")
+		"uninstall", "remove", "install", "linux", "windows", "manual",
+		"about", "support", "donate", "coffee", "github", "version", "info")
 }
 
 func (m *settingsModel) showThemes() bool {
@@ -156,7 +170,8 @@ func (m *settingsModel) showThemes() bool {
 		return true
 	}
 	return len(m.filtered) > 0 && !tokenMatch(q, "reset", "database", "db", "wipe", "clear",
-		"uninstall", "remove", "install", "linux", "windows")
+		"uninstall", "remove", "install", "linux", "windows", "about", "support",
+		"donate", "coffee", "github", "info")
 }
 
 func (m *settingsModel) showReset() bool {
@@ -165,6 +180,15 @@ func (m *settingsModel) showReset() bool {
 
 func (m *settingsModel) showUninstall() bool {
 	return tokenMatch(m.query(), "uninstall", "remove", "install", "linux", "windows", "manual")
+}
+
+func (m *settingsModel) showAbout() bool {
+	q := m.query()
+	if q == "" {
+		return true
+	}
+	return tokenMatch(q, "about", "support", "donate", "coffee", "github", "version", "info",
+		"buymeacoffee", "star")
 }
 
 func (m *settingsModel) themeList() []int {
@@ -184,16 +208,20 @@ func (m *settingsModel) jumpFromSearch() tea.Cmd {
 	m.search.Blur()
 
 	if q != "" && len(m.filtered) > 0 && !tokenMatch(q, "theme", "themes", "reset", "database",
-		"uninstall", "remove", "install") {
+		"uninstall", "remove", "install", "about", "support", "donate", "coffee", "github") {
 		m.themeIdx = m.filtered[0]
 		m.focus = focusThemes
 		return m.applyThemeCmd()
 	}
-	if m.showReset() && !m.showThemes() && !m.showUninstall() {
+	if m.showAbout() && !m.showThemes() && !m.showReset() && !m.showUninstall() {
+		m.focus = focusAbout
+		return nil
+	}
+	if m.showReset() && !m.showThemes() && !m.showUninstall() && !m.showAbout() {
 		m.focus = focusReset
 		return nil
 	}
-	if m.showUninstall() && !m.showThemes() && !m.showReset() {
+	if m.showUninstall() && !m.showThemes() && !m.showReset() && !m.showAbout() {
 		m.focus = focusUninstall
 		return nil
 	}
@@ -266,12 +294,24 @@ func (m *settingsModel) Update(msg tea.Msg) tea.Cmd {
 					m.moveTheme(1)
 					return nil
 				}
+				if m.focus == focusAbout {
+					if m.aboutHover < 2 {
+						m.aboutHover++
+					}
+					return nil
+				}
 				// leave section → next
 				m.focus = m.nextSection(m.focus)
 				return nil
 			case "up", "k":
 				if m.focus == focusThemes {
 					m.moveTheme(-1)
+					return nil
+				}
+				if m.focus == focusAbout {
+					if m.aboutHover > 0 {
+						m.aboutHover--
+					}
 					return nil
 				}
 				m.focus = m.prevSection(m.focus)
@@ -309,6 +349,11 @@ func (m *settingsModel) Update(msg tea.Msg) tea.Cmd {
 					m.confirmReset = true
 					m.resetCursor = 0
 					return nil
+				case focusAbout:
+					if m.aboutHover < 1 {
+						m.aboutHover = 2
+					}
+					return m.openAboutCmd(m.aboutHover)
 				}
 			case "1":
 				if m.showThemes() {
@@ -325,10 +370,27 @@ func (m *settingsModel) Update(msg tea.Msg) tea.Cmd {
 					m.focus = focusUninstall
 				}
 				return nil
+			case "4":
+				if m.showAbout() {
+					m.focus = focusAbout
+				}
+				return nil
 			case "/":
 				m.focus = focusSearch
 				m.search.Focus()
 				return textinput.Blink
+			case "g":
+				if m.showAbout() {
+					m.focus = focusAbout
+					m.aboutHover = 1
+					return m.openAboutCmd(1)
+				}
+			case "b":
+				if m.showAbout() {
+					m.focus = focusAbout
+					m.aboutHover = 2
+					return m.openAboutCmd(2)
+				}
 			case "r":
 				if m.showReset() {
 					m.focus = focusReset
@@ -465,6 +527,9 @@ func (m *settingsModel) visibleSections() []settingsFocus {
 	if m.showUninstall() {
 		out = append(out, focusUninstall)
 	}
+	if m.showAbout() {
+		out = append(out, focusAbout)
+	}
 	return out
 }
 
@@ -556,9 +621,9 @@ func (m *settingsModel) View() string {
 	hl := lipgloss.NewStyle().Foreground(m.theme.Highlight).Bold(true)
 	mt := lipgloss.NewStyle().Foreground(m.theme.Muted)
 	hint := lipgloss.JoinHorizontal(lipgloss.Center,
-		hl.Render("1/2/3"), mt.Render(" panels  ·  "),
+		hl.Render("1–4"), mt.Render(" panels  ·  "),
 		hl.Render("tab"), mt.Render(" next  ·  "),
-		hl.Render("enter"), mt.Render(" apply  ·  "),
+		hl.Render("enter"), mt.Render(" open  ·  "),
 		hl.Render("esc"), mt.Render(" menu"),
 	)
 
@@ -591,6 +656,7 @@ func (m *settingsModel) viewTabs(w int) string {
 		{focusThemes, "Themes", "1", m.theme.AccentDL, m.showThemes()},
 		{focusReset, "Reset DB", "2", m.theme.AccentUL, m.showReset()},
 		{focusUninstall, "Uninstall", "3", m.theme.AccentHL, m.showUninstall()},
+		{focusAbout, "About", "4", m.theme.AccentLat, m.showAbout()},
 	}
 
 	var chips []string
@@ -639,6 +705,8 @@ func (m *settingsModel) viewActivePanel(w int) string {
 		return m.viewReset(w)
 	case m.focus == focusUninstall && m.showUninstall():
 		return m.viewUninstall(w)
+	case m.focus == focusAbout && m.showAbout():
+		return m.viewAbout(w)
 	case m.focus == focusSearch:
 		// Preview first available panel under search
 		if m.showThemes() {
@@ -649,6 +717,9 @@ func (m *settingsModel) viewActivePanel(w int) string {
 		}
 		if m.showUninstall() {
 			return m.viewUninstall(w)
+		}
+		if m.showAbout() {
+			return m.viewAbout(w)
 		}
 		bg := m.theme.MenuIdleFill
 		return lipgloss.NewStyle().
@@ -964,6 +1035,81 @@ func (m *settingsModel) confirmButtons() string {
 		confirm = lipgloss.NewStyle().Foreground(ink).Background(m.theme.AccentUL).Bold(true).Padding(0, 1).Render("Yes, reset")
 	}
 	return cancel + "  " + confirm
+}
+
+func (m *settingsModel) viewAbout(w int) string {
+	var border lipgloss.TerminalColor = m.theme.Border
+	if m.focus == focusAbout {
+		border = m.theme.AccentLat
+	}
+	bg := m.theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+	muted := lipgloss.NewStyle().Foreground(m.theme.Muted).Background(bg)
+	fg := lipgloss.NewStyle().Foreground(m.theme.Foreground).Background(bg)
+	code := lipgloss.NewStyle().Foreground(m.theme.Download).Background(bg)
+
+	title := lipgloss.NewStyle().
+		Foreground(ink).Background(m.theme.AccentLat).Bold(true).Padding(0, 1).
+		Render("About riptide")
+
+	ver := displayVer(m.version)
+	verLine := fg.Render("Version  ") + code.Render(ver)
+
+	ghBtn := m.aboutLinkButton(1, "GitHub  ★ star", aboutGitHubURL, m.theme.AccentDL)
+	bmcBtn := m.aboutLinkButton(2, "Buy me a coffee  ☕", aboutBMCURL, m.theme.AccentUL)
+
+	var hint string
+	if m.focus == focusAbout {
+		hint = muted.Render("enter open support  ·  ↑↓ choose  ·  esc back")
+	} else {
+		hint = muted.Render("press 4 or tab to focus")
+	}
+
+	lines := []string{
+		title,
+		"",
+		verLine,
+		fg.Render("Free & open source · MIT licensed"),
+		"",
+		ghBtn,
+		bmcBtn,
+		"",
+		hint,
+	}
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Background(bg).
+		Padding(1, 1).
+		Width(w).
+		Render(strings.Join(lines, "\n"))
+}
+
+// aboutLinkButton renders one clickable (OSC 8) support link as a chip.
+func (m *settingsModel) aboutLinkButton(slot int, label string, url string, accent lipgloss.Color) string {
+	bg := m.theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+	hover := m.focus == focusAbout && m.aboutHover == slot
+	var btn string
+	if hover {
+		btn = lipgloss.NewStyle().Foreground(ink).Background(accent).Bold(true).Padding(0, 1).Render(label)
+	} else {
+		btn = lipgloss.NewStyle().Foreground(accent).Background(bg).Bold(true).Render("  " + label)
+	}
+	return btn
+}
+
+// openAboutCmd opens the link for the given slot (1 = github, 2 = bmc).
+func (m *settingsModel) openAboutCmd(slot int) tea.Cmd {
+	url := aboutBMCURL
+	if slot == 1 {
+		url = aboutGitHubURL
+	}
+	u := url
+	return func() tea.Msg {
+		_ = openURL(u)
+		return nil
+	}
 }
 
 func (m *settingsModel) applyTheme(t apptheme.Theme) {

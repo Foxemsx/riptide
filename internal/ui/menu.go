@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"strings"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	apptheme "github.com/Foxemsx/riptide/internal/theme"
+	"github.com/Foxemsx/riptide/internal/update"
 )
 
 // Layout thresholds for a responsive menu.
@@ -38,6 +40,9 @@ type menuItem struct {
 	badge    string
 }
 
+// updateCheckMsg carries the background GitHub release check.
+type updateCheckMsg struct{ result update.Result }
+
 // menuModel is the startup screen.
 type menuModel struct {
 	theme   apptheme.Theme
@@ -49,18 +54,40 @@ type menuModel struct {
 	pulse   float64
 	spinner spinner.Model
 	items   []menuItem
+
+	version      string
+	updateStatus updateStatus
+	updateRes    update.Result
+	chipHover    bool
 }
 
-func newMenuModel(theme apptheme.Theme, compact bool) *menuModel {
+type updateStatus int
+
+const (
+	updateChecking updateStatus = iota
+	updateReady
+	updateFailed
+)
+
+func newMenuModel(theme apptheme.Theme, compact bool, version string) *menuModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(theme.Highlight)
+	if version == "" {
+		version = "dev"
+	}
 	return &menuModel{
-		theme:   theme,
-		compact: compact,
-		cursor:  0,
-		hovered: -1,
-		spinner: s,
+		theme:        theme,
+		compact:      compact,
+		cursor:       0,
+		hovered:      -1,
+		spinner:      s,
+		version:      version,
+		updateStatus: updateChecking,
+		updateRes: update.Result{
+			Current: version,
+			OpenURL: update.RepoURL,
+		},
 		items: []menuItem{
 			{
 				title: "Speed Test", subtitle: "one-shot DL · UL · ping", screen: screenTest, hotkey: "1",
@@ -87,7 +114,16 @@ func newMenuModel(theme apptheme.Theme, compact bool) *menuModel {
 }
 
 func (m *menuModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, m.tickCmd())
+	return tea.Batch(m.spinner.Tick, m.tickCmd(), m.checkUpdateCmd())
+}
+
+func (m *menuModel) checkUpdateCmd() tea.Cmd {
+	ver := m.version
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+		defer cancel()
+		return updateCheckMsg{result: update.Check(ctx, ver)}
+	}
 }
 
 func (m *menuModel) tickCmd() tea.Cmd {
@@ -123,6 +159,8 @@ func (m *menuModel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			}
 		case "enter", " ":
 			return m.selectCurrent(), false
+		case "g":
+			return m.openUpdateLink(), false
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -138,9 +176,22 @@ func (m *menuModel) Update(msg tea.Msg) (tea.Cmd, bool) {
 			m.pulse = 0
 		}
 		return m.tickCmd(), false
+	case updateCheckMsg:
+		m.updateRes = msg.result
+		if msg.result.Err != nil && msg.result.Latest == "" {
+			m.updateStatus = updateFailed
+		} else {
+			m.updateStatus = updateReady
+		}
+		if m.updateRes.OpenURL == "" {
+			m.updateRes.OpenURL = update.RepoURL
+		}
+		return nil, false
 	case tea.MouseMsg:
 		switch {
 		case msg.Action == tea.MouseActionMotion:
+			chip := m.updateChipRect()
+			m.chipHover = pointInRect(msg.X, msg.Y, chip)
 			hit := -1
 			for i, box := range m.boxRects() {
 				if msg.X >= box.x && msg.X < box.x+box.w &&
@@ -154,6 +205,9 @@ func (m *menuModel) Update(msg tea.Msg) (tea.Cmd, bool) {
 				return nil, false
 			}
 		case msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress:
+			if pointInRect(msg.X, msg.Y, m.updateChipRect()) {
+				return m.openUpdateLink(), false
+			}
 			for i, box := range m.boxRects() {
 				if msg.X >= box.x && msg.X < box.x+box.w &&
 					msg.Y >= box.y && msg.Y < box.y+box.h {
@@ -165,6 +219,25 @@ func (m *menuModel) Update(msg tea.Msg) (tea.Cmd, bool) {
 		}
 	}
 	return nil, false
+}
+
+func pointInRect(x, y int, r boxRect) bool {
+	if r.w <= 0 || r.h <= 0 {
+		return false
+	}
+	return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h
+}
+
+func (m *menuModel) openUpdateLink() tea.Cmd {
+	url := m.updateRes.OpenURL
+	if url == "" {
+		url = update.RepoURL
+	}
+	u := url
+	return func() tea.Msg {
+		_ = openURL(u)
+		return nil
+	}
 }
 
 func (m *menuModel) move(delta int) {
@@ -228,8 +301,30 @@ func (m *menuModel) headerHeight() int {
 	return 10
 }
 
+// layoutHeight is the vertical space used for the centered menu (excludes update chip strip).
+func (m *menuModel) layoutHeight() int {
+	h := m.height
+	if h <= 0 {
+		h = 30
+	}
+	w := m.width
+	if w <= 0 {
+		w = 100
+	}
+	if w < 56 {
+		return h
+	}
+	// Reserve room for chip + spacer when the chip will be drawn.
+	chipH := 5 // border + 3 lines + padding — fixed so layout is stable while checking
+	footerH := chipH + 1
+	if h-footerH >= 12 {
+		return h - footerH
+	}
+	return h
+}
+
 func (m *menuModel) computeLayout() (mode string, boxW, boxH, startY, startX int, gap int) {
-	w, h := m.width, m.height
+	w, h := m.width, m.layoutHeight()
 	if w <= 0 {
 		w = 100
 	}
@@ -386,6 +481,7 @@ func (m *menuModel) View() string {
 		hl.Render("←→↑↓"), mt.Render(" move  ·  "),
 		hl.Render("1–4"), mt.Render(" pick  ·  "),
 		hl.Render("enter"), mt.Render(" select  ·  "),
+		hl.Render("g"), mt.Render(" github  ·  "),
 		hl.Render("q"), mt.Render(" quit  ·  "),
 		hl.Render("t"), mt.Render(" compact"),
 	)
@@ -408,11 +504,184 @@ func (m *menuModel) View() string {
 		hint,
 	)
 
-	ch := m.height
-	if ch <= 0 {
-		ch = 30
+	w, h := m.width, m.height
+	if w <= 0 {
+		w = 100
 	}
-	return apptheme.PaintScreen(m.theme, m.width, ch, stack)
+	if h <= 0 {
+		h = 30
+	}
+
+	chip := m.renderUpdateChip()
+	if chip == "" || w < 56 {
+		return apptheme.PaintScreen(m.theme, w, h, stack)
+	}
+
+	bg := m.theme.AppBg
+	chipBlock := lipgloss.NewStyle().
+		PaddingRight(1).
+		PaddingBottom(0).
+		Background(bg).
+		Render(chip)
+	chipH := lipgloss.Height(chipBlock)
+	if chipH < 1 {
+		chipH = 1
+	}
+	// Leave a 1-row gap above the chip strip so cards don't collide.
+	footerH := chipH + 1
+	mainH := h - footerH
+	if mainH < 12 {
+		return apptheme.PaintScreen(m.theme, w, h, stack)
+	}
+
+	main := lipgloss.Place(
+		w, mainH,
+		lipgloss.Center, lipgloss.Center,
+		stack,
+		lipgloss.WithWhitespaceBackground(bg),
+	)
+	// Spacer row + right-aligned chip.
+	spacer := lipgloss.NewStyle().Width(w).Height(1).Background(bg).Render("")
+	footer := lipgloss.Place(
+		w, chipH,
+		lipgloss.Right, lipgloss.Bottom,
+		chipBlock,
+		lipgloss.WithWhitespaceBackground(bg),
+	)
+	return lipgloss.JoinVertical(lipgloss.Left, main, spacer, footer)
+}
+
+// updateChipRect is the absolute terminal rect of the update chip (for mouse).
+func (m *menuModel) updateChipRect() boxRect {
+	w, h := m.width, m.height
+	if w <= 0 || h <= 0 || w < 56 {
+		return boxRect{}
+	}
+	chip := m.renderUpdateChip()
+	if chip == "" {
+		return boxRect{}
+	}
+	chipW := lipgloss.Width(chip)
+	chipH := lipgloss.Height(chip)
+	if chipW <= 0 || chipH <= 0 {
+		return boxRect{}
+	}
+	// Matches View(): 1 spacer + chip at bottom-right with PaddingRight(1).
+	return boxRect{
+		x: w - chipW - 1,
+		y: h - chipH,
+		w: chipW,
+		h: chipH,
+	}
+}
+
+func (m *menuModel) renderUpdateChip() string {
+	bg := m.theme.MenuIdleFill
+	ink := lipgloss.Color("#0a0e14")
+	muted := lipgloss.NewStyle().Foreground(m.theme.Muted).Background(bg)
+	fg := lipgloss.NewStyle().Foreground(m.theme.Foreground).Background(bg)
+
+	var border lipgloss.TerminalColor = m.theme.Border
+	if m.chipHover {
+		border = m.theme.AccentHL
+	}
+
+	var title, sub, linkLabel string
+	var titleStyle lipgloss.Style
+	url := m.updateRes.OpenURL
+	if url == "" {
+		url = update.RepoURL
+	}
+
+	switch m.updateStatus {
+	case updateChecking:
+		titleStyle = lipgloss.NewStyle().
+			Foreground(m.theme.Muted).Background(bg).Bold(true)
+		spin := m.spinner.View()
+		title = spin + " Checking for updates"
+		sub = "v" + strings.TrimPrefix(m.version, "v")
+		linkLabel = "github.com/Foxemsx/riptide"
+	case updateFailed:
+		titleStyle = lipgloss.NewStyle().
+			Foreground(m.theme.Muted).Background(bg).Bold(true)
+		title = "· Offline"
+		sub = "v" + strings.TrimPrefix(m.version, "v")
+		linkLabel = "github.com/Foxemsx/riptide"
+		url = update.RepoURL
+	default:
+		if m.updateRes.UpdateAvailable {
+			titleStyle = lipgloss.NewStyle().
+				Foreground(ink).Background(m.theme.AccentUL).Bold(true).Padding(0, 1)
+			title = "↑ Update available"
+			cur := displayVer(m.updateRes.Current)
+			lat := displayVer(m.updateRes.Latest)
+			sub = cur + "  →  " + lat
+			linkLabel = "Open release · click or g"
+			border = m.theme.AccentUL
+			if m.chipHover {
+				border = m.theme.AccentHL
+			}
+		} else {
+			titleStyle = lipgloss.NewStyle().
+				Foreground(ink).Background(m.theme.AccentHL).Bold(true).Padding(0, 1)
+			title = "✓ Up to date"
+			sub = displayVer(m.updateRes.Current)
+			if m.updateRes.Latest != "" {
+				sub = displayVer(m.updateRes.Latest)
+			}
+			linkLabel = "github.com/Foxemsx/riptide"
+			border = m.theme.AccentHL
+			if m.chipHover {
+				border = m.theme.AccentDL
+			}
+		}
+	}
+
+	link := hyperlink(url, muted.Render(linkLabel))
+	// Rebuild link with hover emphasis.
+	if m.chipHover {
+		link = hyperlink(url, lipgloss.NewStyle().
+			Foreground(m.theme.Download).Background(bg).Underline(true).
+			Render(linkLabel))
+	}
+
+	innerW := 30
+	line := func(s string) string {
+		return lipgloss.NewStyle().Width(innerW).Background(bg).Render(s)
+	}
+
+	body := strings.Join([]string{
+		line(titleStyle.Render(title)),
+		line(fg.Render(sub)),
+		line(link),
+	}, "\n")
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Background(bg).
+		Padding(0, 1).
+		Render(body)
+}
+
+func displayVer(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return "dev"
+	}
+	if !strings.HasPrefix(v, "v") && v != "dev" {
+		return "v" + v
+	}
+	return v
+}
+
+// hyperlink wraps text in an OSC 8 terminal hyperlink (clickable in modern terminals).
+func hyperlink(url, text string) string {
+	if url == "" {
+		return text
+	}
+	// OSC 8 ; ; url ST  text  OSC 8 ; ; ST
+	return "\x1b]8;;" + url + "\x1b\\" + text + "\x1b]8;;\x1b\\"
 }
 
 func (m *menuModel) renderBox(i int, it menuItem, cardWidth int) string {

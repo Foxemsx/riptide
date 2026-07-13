@@ -60,7 +60,7 @@ func main() {
 		fmt.Fprint(os.Stdout, "\x1b]111\a\x1b]110\a")
 	}()
 
-	m := ui.NewApp(t, *compactFlag, store)
+	m := ui.NewApp(t, *compactFlag, store, version)
 	defer m.Close()
 
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())

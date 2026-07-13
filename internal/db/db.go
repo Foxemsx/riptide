@@ -213,6 +213,38 @@ func (s *Store) CountRuns() (int, error) {
 	return n, err
 }
 
+// Averages holds the mean download/upload/ping across saved runs of a kind.
+type Averages struct {
+	Count        int
+	DownloadMbps float64
+	UploadMbps   float64
+	PingMs       float64
+}
+
+// Averages returns the mean download, upload, and ping over all saved runs of
+// the given kind (empty kind defaults to "speed"). Zero rows yields a Count of 0.
+func (s *Store) Averages(kind string) (Averages, error) {
+	if s == nil {
+		return Averages{}, nil
+	}
+	if kind == "" {
+		kind = "speed"
+	}
+	var a Averages
+	err := s.db.QueryRow(`
+SELECT COUNT(*),
+       COALESCE(AVG(download_mbps), 0),
+       COALESCE(AVG(upload_mbps), 0),
+       COALESCE(AVG(ping_ms), 0)
+FROM test_runs
+WHERE kind = ?
+`, kind).Scan(&a.Count, &a.DownloadMbps, &a.UploadMbps, &a.PingMs)
+	if err != nil {
+		return Averages{}, err
+	}
+	return a, nil
+}
+
 // Reset clears all test runs and optional settings keys (theme is kept unless wipeSettings).
 func (s *Store) Reset(wipeSettings bool) error {
 	if s == nil {
